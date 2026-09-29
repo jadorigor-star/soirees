@@ -115,8 +115,21 @@
             <button class="pick" data-id="${m.id}" ${m.admin ? 'data-admin="1"' : ''}>${h(m.name)}${m.admin ? ' <span class="pill no">admin</span>' : ''}</button></li>`).join('')}
         </ul>
         ${roster.length ? '' : '<p class="muted">La liste est encore vide.</p>'}
-        <p class="muted small" style="margin-bottom:0">Ton nom n'y est pas ? Demande à l'organisateur de t'ajouter.</p>
+        <button class="btn" id="join-open" style="width:100%;margin-top:12px">＋ Je ne suis pas dans la liste</button>
+        <div id="join-box"></div>
       </div>`;
+    document.getElementById('join-open').onclick = (ev) => {
+      ev.target.hidden = true;
+      const box = document.getElementById('join-box');
+      box.innerHTML = profileForm('join', { on_whatsapp: 1 }, "M'inscrire");
+      box.querySelector('input[name=name]').focus();
+      bindProfileForm('join', async (o) => {
+        token = (await call('POST', '/join', o)).token;
+        try { localStorage.setItem(LS, token); } catch {}
+        toast(`Bienvenue ${o.name} ! 🎉`);
+        await load();
+      });
+    };
     const find = document.getElementById('find');
     if (find) find.oninput = () => {
       const q = find.value.trim().toLowerCase();
@@ -131,6 +144,28 @@
         await load();
       } catch (e) { toast(e.message); }
     });
+  }
+
+  // Formulaire commun : inscription et « Mon profil »
+  function profileForm(id, m, label) {
+    return `<form id="${id}" class="profile">
+      <label class="field">Ton prénom (tel que les autres le reconnaîtront)<input type="text" name="name" required maxlength="60" value="${h(m.name)}" autocomplete="given-name"></label>
+      <div class="field">Tu es dans le groupe</div>
+      <div class="chk2"><label class="check"><input type="checkbox" name="on_whatsapp" ${m.on_whatsapp ? 'checked' : ''}> WhatsApp</label>
+        <label class="check"><input type="checkbox" name="on_signal" ${m.on_signal ? 'checked' : ''}> Signal</label></div>
+      <label class="field">Téléphone (facultatif, pour qu'on puisse te relancer)<input type="tel" name="phone" value="${h(m.phone)}" placeholder="+41 79 123 45 67"></label>
+      <button class="btn primary">${label}</button>
+    </form>`;
+  }
+  function bindProfileForm(id, submit) {
+    const f = document.getElementById(id);
+    f.onsubmit = async (e) => {
+      e.preventDefault();
+      const o = { name: f.name.value.trim(), phone: f.phone.value.trim(), on_whatsapp: f.on_whatsapp.checked, on_signal: f.on_signal.checked };
+      if (!o.on_whatsapp && !o.on_signal) return toast('Coche au moins WhatsApp ou Signal');
+      const btn = f.querySelector('button'); btn.disabled = true;
+      try { await submit(o); } catch (err) { toast(err.message); btn.disabled = false; }
+    };
   }
 
   function logout() {
@@ -225,7 +260,7 @@
     const ev = data.event;
     const me = data.me;
     const html = [];
-    html.push(`<div class="topbar"><h1>Soirées du mois</h1><span class="hello">Salut ${h(me.name)} · <a href="#" id="logout">pas toi ?</a></span></div>`);
+    html.push(`<div class="topbar"><h1>Soirées du mois</h1><span class="hello">Salut ${h(me.name)} · <a href="#" id="profile-open">mon profil</a> · <a href="#" id="logout">pas toi ?</a></span></div><div id="profile-box"></div>`);
 
     html.push(switcher());
     if (!ev) {
@@ -516,6 +551,15 @@
       catch (err) { toast(err.message); }
     };
 
+    const po = document.getElementById('profile-open');
+    if (po) po.onclick = (e) => {
+      e.preventDefault();
+      const box = document.getElementById('profile-box');
+      if (box.innerHTML) { box.innerHTML = ''; return; }
+      box.innerHTML = `<section class="card"><h2>Mon profil</h2>${profileForm('profile', data.me, 'Enregistrer')}
+        <p class="muted small" style="margin:10px 0 0">Ton nouveau nom apparaîtra partout, y compris dans la liste où chacun se choisit.</p></section>`;
+      bindProfileForm('profile', async (o) => { await call('PUT', '/me', o); toast('Profil mis à jour'); await load(data.event?.id); });
+    };
     const lo = document.getElementById('logout');
     if (lo) lo.onclick = (e) => { e.preventDefault(); if (confirm('Changer de personne sur ce téléphone ?')) logout(); };
     const add = document.getElementById('add-member');

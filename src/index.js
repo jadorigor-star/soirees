@@ -121,6 +121,19 @@ async function api(request, env, url) {
     if (row.is_admin) throw new HttpError(403, 'Les administrateurs utilisent leur lien personnel');
     return json({ token: row.token });
   }
+  // --- Inscription libre depuis le lien commun ---
+  if (path === '/join' && method === 'POST') {
+    const b = await body(request);
+    const name = clean(b.name, 60);
+    if (!name) throw new HttpError(400, 'Indique ton prénom');
+    await assertFreeName(env, name);
+    const c = channels(b);
+    const token = newToken();
+    await env.DB.prepare('INSERT INTO members (name, token, channel, on_whatsapp, on_signal, phone) VALUES (?, ?, ?, ?, ?, ?)')
+      .bind(name, token, c.legacy, c.wa, c.sg, clean(b.phone, 30)).run();
+    return json({ token });
+  }
+
   // --- Calendrier (.ics) : ouvert directement par Safari / Agenda, sans en-têtes d'authentification ---
   if ((m = path.match(/^\/events\/(\d+)\/[\w-]*\.ics$/)) && method === 'GET') {
     const ev = await getEvent(env, Number(m[1]));
@@ -174,7 +187,7 @@ async function api(request, env, url) {
 
     const latest = history[0];
     return json({
-      me: { id: me.id, name: me.name, phone: me.phone, is_admin: !!me.is_admin },
+      me: { id: me.id, name: me.name, phone: me.phone, on_whatsapp: me.on_whatsapp, on_signal: me.on_signal, is_admin: !!me.is_admin },
       upcoming,
       today: todayZurich(),
       event: ev || null,
@@ -185,6 +198,18 @@ async function api(request, env, url) {
       canEdit: editor,
       canCreate: await mayCreate(env, me),
     });
+  }
+
+  // --- Modifier son propre profil (nom affiché, messageries, téléphone) ---
+  if (path === '/me' && method === 'PUT') {
+    const b = await body(request);
+    const name = clean(b.name, 60);
+    if (!name) throw new HttpError(400, 'Nom requis');
+    await assertFreeName(env, name, me.id);
+    const c = channels(b);
+    await env.DB.prepare('UPDATE members SET name = ?, channel = ?, on_whatsapp = ?, on_signal = ?, phone = ? WHERE id = ?')
+      .bind(name, c.legacy, c.wa, c.sg, clean(b.phone, 30), me.id).run();
+    return json({ ok: true });
   }
 
   // --- Répondre / modifier sa réponse ---
@@ -243,6 +268,7 @@ async function api(request, env, url) {
     const b = await body(request);
     const name = clean(b.name, 60);
     if (!name) throw new HttpError(400, 'Nom requis');
+    await assertFreeName(env, name);
     const c = channels(b);
     const r = await env.DB.prepare('INSERT INTO members (name, token, channel, on_whatsapp, on_signal, phone, is_admin) VALUES (?, ?, ?, ?, ?, ?, ?)')
       .bind(name, newToken(), c.legacy, c.wa, c.sg, clean(b.phone, 30), bool(b.is_admin)).run();
@@ -254,6 +280,7 @@ async function api(request, env, url) {
     const b = await body(request);
     const name = clean(b.name, 60);
     if (!name) throw new HttpError(400, 'Nom requis');
+    await assertFreeName(env, name, id);
     if (id === me.id && (!b.is_admin || !b.active)) throw new HttpError(400, 'Vous ne pouvez pas retirer vos propres droits');
     const c = channels(b);
     await env.DB.prepare('UPDATE members SET name = ?, channel = ?, on_whatsapp = ?, on_signal = ?, phone = ?, is_admin = ?, active = ? WHERE id = ?')
@@ -280,6 +307,13 @@ async function mayCreate(env, me) {
        FROM events`
   ).bind(me.id, todayZurich()).first();
   return row.n === 0 || row.upcoming_mine > 0 || row.last_host === me.id;
+}
+
+// Deux membres actifs ne peuvent pas porter le même nom (sinon on ne sait plus qui choisir).
+async function assertFreeName(env, name, exceptId = 0) {
+  const dup = await env.DB.prepare('SELECT id FROM members WHERE lower(name) = lower(?) AND active = 1 AND id <> ?')
+    .bind(name, exceptId).first();
+  if (dup) throw new HttpError(409, `« ${name} » existe déjà : choisis ce nom dans la liste, ou ajoute une initiale`);
 }
 
 function requireAdmin(me) {

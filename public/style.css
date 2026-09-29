@@ -143,3 +143,6 @@ details.card[open] > summary { margin-bottom: 8px; }
 .answer.maybe { background: var(--maybe-soft); } .answer.maybe b { color: var(--maybe); }
 .answer b { font-size: 18px; }
 .pill.changed { background: var(--accent-soft); color: var(--accent); }
+.topbar { flex-wrap: wrap; }
+.hello a { white-space: nowrap; }
+[hidden] { display: none !important; }

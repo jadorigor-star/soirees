@@ -6,7 +6,7 @@ Hébergement : **Cloudflare Workers + D1** (gratuit pour cet usage). Code : **Gi
 
 ## Comment ça marche
 
-- **Un seul lien pour tous** : on poste l'adresse de l'app dans les groupes. À la première visite, chacun touche son nom dans la liste ; le téléphone s'en souvient ensuite. Les administrateurs, eux, gardent un lien personnel secret (`/m/xxxx`).
+- **Un seul lien pour tous** : on poste l'adresse de l'app dans les groupes. À la première visite, chacun touche son nom dans la liste ; le téléphone s'en souvient ensuite. Un nouveau venu peut s'inscrire lui-même (« Je ne suis pas dans la liste »), et chacun peut changer son nom via « mon profil ». Les administrateurs, eux, gardent un lien personnel secret (`/m/xxxx`).
 - **WhatsApp et Signal** : l'app prépare les messages (annonce, rappel avant l'échéance, relances individuelles). L'organisateur les colle dans les deux groupes en un clic (bouton WhatsApp, bouton partager pour Signal, ou copier).
 - **Organisateur tournant** : l'organisateur de la dernière soirée (ou un admin) crée la suivante et désigne le prochain organisateur. L'app suggère celui qui n'a pas organisé depuis le plus longtemps. Le nouvel organisateur complète le lieu depuis son propre lien.
 - **Plusieurs soirées par mois** : toutes les soirées à venir s'affichent en onglets ; chacun répond pour chacune.
