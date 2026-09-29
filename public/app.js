@@ -272,10 +272,13 @@
       html.push(summaryCard(ev));
     }
 
-    if (data.canEdit || data.canCreate || me.is_admin) html.push(`<h2 class="section-label">Pour l'organisateur</h2>`);
-    if (ev && data.canEdit) html.push(shareCard(ev), editCard(ev));
-    if (data.canCreate) html.push(createCard());
-    if (me.is_admin) html.push(membersCard());
+    const org = [];
+    if (ev && data.canEdit) org.push(shareCard(ev), editCard(ev));
+    if (data.canCreate) org.push(createCard());
+    if (me.is_admin) org.push(membersCard());
+    if (org.length) {
+      html.push(`<section class="admin-zone"><h2 class="section-label">⚙️ Espace organisateur${me.is_admin ? ' · admin' : ''}</h2>${org.join('')}</section>`);
+    }
     if (data.history.length > 1) html.push(historyCard());
     html.push(`<div id="profile-box"></div>
       <footer class="foot">Tu es connecté·e en tant que <b>${h(me.name)}</b>
@@ -477,7 +480,7 @@
       <p class="muted small">Tout le monde utilise le lien commun et choisit son nom. Seuls les admins ont un lien personnel (bouton 🔑).</p>
       <ul class="list">${rows}</ul>
       <div id="member-form"></div>
-      <button class="btn" id="add-member" style="width:100%;margin-top:10px">＋ Ajouter un membre</button>
+      <button class="btn" id="add-member" style="display:flex;width:auto;margin-top:10px">＋ Ajouter un membre</button>
     </details>`;
   }
 
