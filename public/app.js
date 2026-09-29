@@ -99,14 +99,42 @@
       };
       return;
     }
+    let roster = [];
+    try { roster = (await call('GET', '/roster')).members; } catch {}
     $app.innerHTML = `
       <div class="topbar"><h1>Soirées du mois</h1></div>
-      <div class="card hero center">
-        <p style="font-size:40px;margin:0">🔑</p>
-        <h2>Utilisez votre lien personnel</h2>
-        <p class="muted">${err ? h(err) + '. ' : ''}Chaque membre a reçu un lien perso par WhatsApp ou Signal. Ouvrez-le pour répondre — il est valable pour toutes les soirées.</p>
-        <p class="muted small">Lien perdu ? Demandez-le à l'organisateur.</p>
+      <div class="card hero">
+        <h2>Qui es-tu ? 👋</h2>
+        <p class="muted small" style="margin-top:-6px">${err ? h(err) + '. ' : ''}Touche ton nom : ton téléphone s'en souviendra pour les prochaines fois.</p>
+        ${roster.length > 8 ? `<input type="text" id="find" placeholder="🔍 Chercher mon nom" autocomplete="off">` : ''}
+        <ul class="list" id="roster" style="margin-top:8px">
+          ${roster.map((m) => `<li data-name="${h(m.name.toLowerCase())}">
+            <button class="pick" data-id="${m.id}" ${m.admin ? 'data-admin="1"' : ''}>${h(m.name)}${m.admin ? ' <span class="pill no">admin</span>' : ''}</button></li>`).join('')}
+        </ul>
+        ${roster.length ? '' : '<p class="muted">La liste est encore vide.</p>'}
+        <p class="muted small" style="margin-bottom:0">Ton nom n'y est pas ? Demande à l'organisateur de t'ajouter.</p>
       </div>`;
+    const find = document.getElementById('find');
+    if (find) find.oninput = () => {
+      const q = find.value.trim().toLowerCase();
+      document.querySelectorAll('#roster li').forEach((li) => { li.hidden = q && !li.dataset.name.includes(q); });
+    };
+    document.querySelectorAll('.pick').forEach((b) => b.onclick = async () => {
+      if (b.dataset.admin) return toast('Ouvre ton lien admin personnel pour te connecter');
+      if (!confirm(`Tu es bien ${b.textContent.trim()} ?`)) return;
+      try {
+        token = (await call('POST', '/claim', { member_id: b.dataset.id })).token;
+        try { localStorage.setItem(LS, token); } catch {}
+        await load();
+      } catch (e) { toast(e.message); }
+    });
+  }
+
+  function logout() {
+    try { localStorage.removeItem(LS); } catch {}
+    token = null;
+    history.replaceState(null, '', '/');
+    renderNoToken();
   }
 
   // ---------- messages à partager ----------
@@ -119,8 +147,7 @@
       ev.host_name ? `🙋 Organisé par ${ev.host_name}` : null,
       '',
       `Qui vient ? Qui mange 🍽️, chante au karaoké 🎤, boit un verre 🍷 ? Seul·e ou accompagné·e ?`,
-      `👉 Réponds avec ton lien perso avant le ${shortDate(ev.deadline)}.`,
-      `${location.origin}`,
+      `👉 Réponds ici avant le ${shortDate(ev.deadline)} : ${location.origin}`,
     ].filter((x) => x !== null).join('\n');
   }
 
@@ -134,7 +161,7 @@
       `Réponses jusqu'au ${shortDate(ev.deadline)} : ${when} !`,
       names ? `Pas encore de réponse de : ${names}.` : `Tout le monde a répondu, merci 🙏`,
       `Déjà ${t.people} personne${t.people > 1 ? 's' : ''} attendue${t.people > 1 ? 's' : ''}.`,
-      `👉 Réponds avec ton lien perso : ${location.origin}`,
+      `👉 Réponds ici : ${location.origin}`,
     ].join('\n');
   }
 
@@ -143,7 +170,7 @@
   }
 
   function welcomeText(member) {
-    return `Salut ${member.name} ! 👋 Voici ton lien perso pour nos soirées du mois :\n${personalLink(member.token)}\n\nGarde-le (ajoute-le à tes favoris ou à l'écran d'accueil) : chaque mois, il te sert à dire si tu viens, si tu manges, chantes ou bois un verre. Ne le partage pas, il est à ton nom.`;
+    return `Salut ${member.name} ! Voici ton lien administrateur pour les soirées du mois (garde-le pour toi, il donne accès à la gestion) :\n${personalLink(member.token)}`;
   }
 
   function shareButtons(text, id) {
@@ -183,7 +210,7 @@
     const ev = data.event;
     const me = data.me;
     const html = [];
-    html.push(`<div class="topbar"><h1>Soirées du mois</h1><span class="hello">Salut ${h(me.name)}</span></div>`);
+    html.push(`<div class="topbar"><h1>Soirées du mois</h1><span class="hello">Salut ${h(me.name)} · <a href="#" id="logout">pas toi ?</a></span></div>`);
 
     if (!ev) {
       html.push(`<div class="card hero center"><p style="font-size:40px;margin:0">🗓️</p><h2>Pas encore de soirée prévue</h2>
@@ -345,7 +372,7 @@
     };
     return `<details class="card" ${data.event ? '' : 'open'}>
       <summary>Prévoir la soirée suivante</summary>
-      <p class="muted small">L'organisateur suggéré est celui qui n'a pas organisé depuis le plus longtemps. Il pourra compléter le lieu depuis son lien perso.</p>
+      <p class="muted small">L'organisateur suggéré est celui qui n'a pas organisé depuis le plus longtemps. Il pourra compléter le lieu lui-même dans l'app.</p>
       ${eventForm('create', ev, 'Créer la soirée')}
     </details>`;
   }
@@ -353,9 +380,8 @@
   function membersCard() {
     const rows = data.members.map((m) => {
       texts['w' + m.id] = welcomeText(m);
-      const send = m.phone && m.channel === 'whatsapp'
-        ? `<a class="btn sm wa" href="${h(waLink(texts['w' + m.id], m.phone))}" target="_blank" rel="noopener">Envoyer</a>`
-        : `<button class="btn sm ${m.channel === 'signal' ? 'signal' : ''}" data-share="w${m.id}">Envoyer</button>`;
+      const send = m.is_admin && m.id !== data.me.id
+        ? `<button class="btn sm" data-share="w${m.id}" title="Envoyer son lien admin">🔑 Lien</button>` : '';
       return `<li>
         <div class="who"><b>${h(m.name)}</b>
           <span class="pill ${m.channel === 'signal' ? 'signal' : 'wa'}">${m.channel === 'signal' ? 'Signal' : 'WhatsApp'}</span>
@@ -366,7 +392,7 @@
     }).join('');
     return `<details class="card">
       <summary>Liste de distribution (${data.members.filter((m) => m.active).length})</summary>
-      <p class="muted small">« Envoyer » transmet à chacun son lien perso (une seule fois, il reste valable).</p>
+      <p class="muted small">Tout le monde utilise le lien commun et choisit son nom. Seuls les admins ont un lien personnel (bouton 🔑).</p>
       <ul class="list">${rows}</ul>
       <div id="member-form"></div>
       <button class="btn" id="add-member" style="width:100%;margin-top:10px">＋ Ajouter un membre</button>
@@ -446,6 +472,8 @@
       catch (err) { toast(err.message); }
     };
 
+    const lo = document.getElementById('logout');
+    if (lo) lo.onclick = (e) => { e.preventDefault(); if (confirm('Changer de personne sur ce téléphone ?')) logout(); };
     const add = document.getElementById('add-member');
     if (add) add.onclick = () => openMemberForm({ channel: 'whatsapp', active: 1 });
     $app.querySelectorAll('[data-edit-m]').forEach((b) => b.onclick = () => openMemberForm(data.members.find((m) => m.id === Number(b.dataset.editM))));

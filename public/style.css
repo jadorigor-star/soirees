@@ -124,3 +124,7 @@ details.card[open] > summary { margin-bottom: 8px; }
 
 #toast { position: fixed; left: 50%; bottom: 24px; transform: translate(-50%, 20px); background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 99px; font-size: 15px; opacity: 0; transition: .25s; pointer-events: none; max-width: calc(100% - 32px); text-align: center; }
 #toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+.pick { width: 100%; text-align: left; padding: 12px 4px; background: none; border: 0; color: var(--ink); font: inherit; font-size: 17px; font-weight: 600; cursor: pointer; }
+.list li:has(.pick) { padding: 0; }
+.list li[hidden] { display: none; }

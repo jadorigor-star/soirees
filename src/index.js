@@ -97,6 +97,22 @@ async function api(request, env, url) {
     return json({ token });
   }
 
+  // --- Lien commun : chacun choisit son nom dans la liste ---
+  if (path === '/roster' && method === 'GET') {
+    const rows = (await env.DB.prepare(
+      'SELECT id, name, is_admin FROM members WHERE active = 1 ORDER BY lower(name)'
+    ).all()).results;
+    return json({ members: rows.map((r) => ({ id: r.id, name: r.name, admin: !!r.is_admin })) });
+  }
+  if (path === '/claim' && method === 'POST') {
+    const b = await body(request);
+    const row = await env.DB.prepare('SELECT token, is_admin FROM members WHERE id = ? AND active = 1')
+      .bind(Number(b.member_id)).first();
+    if (!row) throw new HttpError(404, 'Membre introuvable');
+    // Les administrateurs gardent leur lien perso : il donne accès à la gestion.
+    if (row.is_admin) throw new HttpError(403, 'Les administrateurs utilisent leur lien personnel');
+    return json({ token: row.token });
+  }
   // --- Calendrier (.ics) : accessible avec ?t= pour les applis agenda ---
   if ((m = path.match(/^\/events\/(\d+)\/ics$/)) && method === 'GET') {
     await auth(request, env);
