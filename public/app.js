@@ -6,6 +6,7 @@
   let token = null;
   let data = null;
   let form = null; // réponse en cours d'édition
+  let editing = false; // « Changer d'avis » ouvert
 
   // ---------- utilitaires ----------
   const h = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -61,6 +62,7 @@
     try {
       data = await call('GET', '/me' + (eventId ? `?event=${eventId}` : ''));
       form = null;
+      editing = false;
       render();
     } catch (e) {
       if (e.status === 401) {
@@ -83,8 +85,9 @@
           <p>Première utilisation : créez votre profil. Vous serez administrateur et pourrez ajouter les autres membres.</p>
           <form id="setup">
             <label class="field">Votre prénom<input type="text" name="name" required maxlength="60" autocomplete="given-name"></label>
-            <label class="field">Vous êtes sur
-              <select name="channel"><option value="whatsapp">WhatsApp</option><option value="signal">Signal</option></select></label>
+            <div class="field">Vous êtes sur</div>
+            <div class="chk2"><label class="check"><input type="checkbox" name="on_whatsapp" checked> WhatsApp</label>
+              <label class="check"><input type="checkbox" name="on_signal"> Signal</label></div>
             <label class="field">Téléphone (facultatif)<input type="tel" name="phone" placeholder="+41 79 123 45 67"></label>
             <button class="btn primary">Créer mon profil</button>
           </form>
@@ -181,6 +184,18 @@
     </div>`;
   }
 
+  const chanPills = (m) => `${m.on_whatsapp ? '<span class="pill wa">WhatsApp</span>' : ''}${m.on_signal ? '<span class="pill signal">Signal</span>' : ''}`;
+  const pad2 = (n) => String(n).padStart(2, '0');
+  function googleCalLink(ev) {
+    const [hh, mm] = ev.time.split(':').map(Number);
+    const day = ev.date.replace(/-/g, '');
+    const start = `${day}T${pad2(hh)}${pad2(mm)}00`, end = `${day}T${pad2(Math.min(23, hh + 4))}${pad2(mm)}00`;
+    const where = [ev.place, ev.address].filter(Boolean).join(', ');
+    const q = new URLSearchParams({ action: 'TEMPLATE', text: ev.title, dates: `${start}/${end}`, ctz: 'Europe/Zurich',
+      details: `${ev.notes ? ev.notes + '\n\n' : ''}Organisé par ${ev.host_name || '?'} — ${location.origin}`, location: where });
+    return `https://calendar.google.com/calendar/render?${q}`;
+  }
+
   // ---------- calculs ----------
   function totals() {
     const t = { people: 0, maybe: 0, no: 0, eat: 0, sing: 0, drink: 0 };
@@ -212,6 +227,7 @@
     const html = [];
     html.push(`<div class="topbar"><h1>Soirées du mois</h1><span class="hello">Salut ${h(me.name)} · <a href="#" id="logout">pas toi ?</a></span></div>`);
 
+    html.push(switcher());
     if (!ev) {
       html.push(`<div class="card hero center"><p style="font-size:40px;margin:0">🗓️</p><h2>Pas encore de soirée prévue</h2>
         <p class="muted">${data.canCreate ? 'Créez la première soirée ci-dessous.' : "L'organisateur va bientôt l'annoncer."}</p></div>`);
@@ -229,6 +245,20 @@
 
     $app.innerHTML = html.join('');
     bind();
+  }
+
+  // Plusieurs soirées à venir : onglets pour passer de l'une à l'autre
+  function switcher() {
+    const up = data.upcoming || [];
+    const cur = data.event && data.event.id;
+    if (up.length < 2 && (up.length === 0 || up[0].id === cur)) return '';
+    const mark = { yes: '👍', maybe: '🤔', no: '🙅' };
+    return `<nav class="chips" aria-label="Soirées à venir">${up.map((e) => `
+      <button class="chip" data-ev="${e.id}" aria-current="${e.id === cur}">
+        <b>${h(d(e.date, { weekday: 'short', day: 'numeric', month: 'short' }))}</b>
+        <span>${h(e.title)}</span>
+        <i>${e.cancelled ? 'annulée' : e.mine ? mark[e.mine] : '❓ à répondre'}</i>
+      </button>`).join('')}</nav>`;
   }
 
   function eventCard(ev) {
@@ -252,18 +282,32 @@
       </div>
       ${ev.cancelled || past ? '' : `<div class="deadline ${over ? 'over' : ''}">${dl}</div>`}
       ${ev.notes ? `<div class="notes">${h(ev.notes)}</div>` : ''}
-      ${ev.cancelled || past ? '' : `<div class="btns"><a class="btn sm" href="/api/events/${ev.id}/ics?t=${h(token)}">📅 Ajouter à mon agenda</a></div>`}
+      ${ev.cancelled || past ? '' : `<div class="btns">
+        <a class="btn sm" href="/api/events/${ev.id}/soiree.ics">📅 Agenda iPhone / Outlook</a>
+        <a class="btn sm" href="${h(googleCalLink(ev))}" target="_blank" rel="noopener">Google Agenda</a></div>`}
     </section>`;
   }
 
   function rsvpCard(ev) {
     const mine = data.rsvps.find((r) => r.member_id === data.me.id);
+    if (mine && !editing) {
+      const label = { yes: '👍 Tu viens', maybe: '🤔 Peut-être', no: '🙅 Tu ne viens pas' }[mine.attending];
+      const extras = mine.attending === 'no' ? '' : [mine.guests ? `avec ${mine.guests} personne${mine.guests > 1 ? 's' : ''}` : 'seul·e',
+        mine.eat ? '🍽️' : '', mine.sing ? '🎤' : '', mine.drink ? '🍷' : ''].filter(Boolean).join(' ');
+      return `<section class="card" id="rsvp">
+        <h2>Ta réponse</h2>
+        <div class="answer ${mine.attending}"><b>${label}</b>${extras ? `<span>${extras}</span>` : ''}</div>
+        ${mine.comment ? `<p class="muted small" style="margin:8px 2px 0">« ${h(mine.comment)} »</p>` : ''}
+        <button class="btn" id="change" style="width:100%;margin-top:14px">🔄 Changer d'avis / modifier</button>
+        <p class="muted small center" style="margin:8px 0 0">Tu peux changer ta réponse à tout moment.</p>
+      </section>`;
+    }
     if (!form) form = mine ? { ...mine } : { attending: null, guests: 0, eat: 0, sing: 0, drink: 0, comment: '' };
     const going = form.attending && form.attending !== 'no';
     const btn = (v, label) => `<button type="button" class="${v}" data-att="${v}" aria-pressed="${form.attending === v}">${label}</button>`;
     const tog = (k, emo, label) => `<label class="toggle"><input type="checkbox" data-tog="${k}" ${form[k] ? 'checked' : ''}><span class="emo">${emo}</span>${label}</label>`;
     return `<section class="card" id="rsvp">
-      <h2>${mine ? 'Votre réponse' : 'Vous venez ?'}</h2>
+      <h2>${mine ? 'Modifier ta réponse' : 'Tu viens ?'}</h2>
       <div class="choice">${btn('yes', '👍 Oui')}${btn('maybe', '🤔 Peut-être')}${btn('no', '🙅 Non')}</div>
       ${going ? `
         <div class="stepper">
@@ -274,7 +318,7 @@
         <div class="toggles">${tog('eat', '🍽️', 'Je mange')}${tog('sing', '🎤', 'Karaoké')}${tog('drink', '🍷', 'Un verre')}</div>` : ''}
       <label class="field">Un mot (facultatif)<textarea id="comment" maxlength="280" placeholder="${going ? 'Ex. : j’arrive vers 20h' : 'Ex. : la prochaine fois !'}">${h(form.comment || '')}</textarea></label>
       <button class="btn primary" id="save" ${form.attending ? '' : 'disabled'}>${mine ? 'Mettre à jour' : 'Envoyer ma réponse'}</button>
-      ${mine ? `<p class="muted small center" style="margin:8px 0 0">Enregistré le ${new Date(mine.updated_at.replace(' ', 'T') + 'Z').toLocaleString('fr-CH', { dateStyle: 'short', timeStyle: 'short' })}</p>` : ''}
+      ${mine ? `<button class="btn" id="cancel-edit" style="width:100%;margin-top:8px">Annuler</button>` : ''}
     </section>`;
   }
 
@@ -283,10 +327,10 @@
     const icons = (r) => r.attending === 'no' ? '' : `${r.eat ? '🍽️' : ''}${r.sing ? '🎤' : ''}${r.drink ? '🍷' : ''}`;
     const label = { yes: 'Oui', maybe: 'Peut-être', no: 'Non' };
     const rows = data.rsvps.map((r) => `<li>
-        <div class="who"><b>${h(r.name)}</b>${r.guests ? ` <span class="muted">+${r.guests}</span>` : ''}<span class="pill ${r.attending}">${label[r.attending]}</span>
+        <div class="who"><b>${h(r.name)}</b>${r.guests ? ` <span class="muted">+${r.guests}</span>` : ''}<span class="pill ${r.attending}">${label[r.attending]}</span>${r.changed ? `<span class="pill changed" title="Avant : ${label[r.previous] || '?'}">a changé d'avis</span>` : ''}
           ${r.comment ? `<div class="c">« ${h(r.comment)} »</div>` : ''}</div>
         <span class="icons">${icons(r)}</span></li>`).join('');
-    const pend = data.pending.map((p) => `<li><div class="who">${h(p.name)} <span class="pill ${p.channel === 'signal' ? 'signal' : 'wa'}">${p.channel === 'signal' ? 'Signal' : 'WhatsApp'}</span></div>
+    const pend = data.pending.map((p) => `<li><div class="who">${h(p.name)} ${chanPills(p)}</div>
         ${data.canEdit && !ev.cancelled ? `<span class="quick" title="Réponse reçue par message">
           <button data-for="${p.id}" data-a="yes">Oui</button><button data-for="${p.id}" data-a="no">Non</button></span>` : ''}</li>`).join('');
     return `<section class="card">
@@ -309,9 +353,8 @@
       const txt = individualText(p, ev);
       texts['ind' + p.id] = txt;
       const direct = p.phone
-        ? p.channel === 'signal'
-          ? `<a class="btn sm signal" href="https://signal.me/#p/+${phoneDigits(p.phone)}" target="_blank" rel="noopener" data-copyfirst="ind${p.id}">Signal</a>`
-          : `<a class="btn sm wa" href="${h(waLink(txt, p.phone))}" target="_blank" rel="noopener">WhatsApp</a>`
+        ? `${p.on_whatsapp ? `<a class="btn sm wa" href="${h(waLink(txt, p.phone))}" target="_blank" rel="noopener">WhatsApp</a>` : ''}${p.on_signal
+            ? `<a class="btn sm signal" href="https://signal.me/#p/+${phoneDigits(p.phone)}" target="_blank" rel="noopener" data-copyfirst="ind${p.id}">Signal</a>` : ''}`
         : `<button class="btn sm" data-share="ind${p.id}">Partager</button>`;
       return `<li><div class="who">${h(p.name)}</div><span class="quick">${direct}</span></li>`;
     }).join('');
@@ -360,7 +403,8 @@
   }
 
   function createCard() {
-    const base = data.event && data.event.date >= data.today ? data.event.date : data.today;
+    const up = (data.upcoming || []).filter((e) => !e.cancelled);
+    const base = up.length ? up[up.length - 1].date : data.today;
     const next = new Date(base + 'T12:00:00');
     next.setMonth(next.getMonth() + 1);
     const date = next.toISOString().slice(0, 10);
@@ -371,8 +415,8 @@
       place: '', address: '', deadline: addDays(date, -7), host_id: host.id, notes: '',
     };
     return `<details class="card" ${data.event ? '' : 'open'}>
-      <summary>Prévoir la soirée suivante</summary>
-      <p class="muted small">L'organisateur suggéré est celui qui n'a pas organisé depuis le plus longtemps. Il pourra compléter le lieu lui-même dans l'app.</p>
+      <summary>Prévoir une nouvelle soirée</summary>
+      <p class="muted small">Il peut y en avoir plusieurs dans le mois : changez simplement la date. L'organisateur suggéré est celui qui n'a pas organisé depuis le plus longtemps ; il pourra compléter le lieu lui-même.</p>
       ${eventForm('create', ev, 'Créer la soirée')}
     </details>`;
   }
@@ -384,7 +428,7 @@
         ? `<button class="btn sm" data-share="w${m.id}" title="Envoyer son lien admin">🔑 Lien</button>` : '';
       return `<li>
         <div class="who"><b>${h(m.name)}</b>
-          <span class="pill ${m.channel === 'signal' ? 'signal' : 'wa'}">${m.channel === 'signal' ? 'Signal' : 'WhatsApp'}</span>
+          ${chanPills(m)}
           ${m.is_admin ? '<span class="pill yes">admin</span>' : ''}${m.active ? '' : '<span class="pill off">inactif</span>'}
           <div class="c">${m.phone ? h(m.phone) : 'pas de numéro'}</div></div>
         <span class="quick">${m.active ? send : ''}<button class="btn sm" data-edit-m="${m.id}">✎</button></span>
@@ -404,14 +448,14 @@
     return `<form id="mform" class="card" style="margin:12px 0 0;box-shadow:none">
       <h3 style="margin-top:0">${edit ? 'Modifier ' + h(m.name) : 'Nouveau membre'}</h3>
       <label class="field">Prénom / nom<input type="text" name="name" required maxlength="60" value="${h(m.name)}"></label>
-      <label class="field">Groupe<select name="channel">
-        <option value="whatsapp" ${m.channel !== 'signal' ? 'selected' : ''}>WhatsApp</option>
-        <option value="signal" ${m.channel === 'signal' ? 'selected' : ''}>Signal</option></select></label>
+      <div class="field">Dans le(s) groupe(s)</div>
+      <div class="chk2"><label class="check"><input type="checkbox" name="on_whatsapp" ${m.on_whatsapp ? 'checked' : ''}> WhatsApp</label>
+        <label class="check"><input type="checkbox" name="on_signal" ${m.on_signal ? 'checked' : ''}> Signal</label></div>
       <label class="field">Téléphone (facultatif, pour les envois directs)<input type="tel" name="phone" value="${h(m.phone)}" placeholder="+41 79 123 45 67"></label>
       <label class="check"><input type="checkbox" name="is_admin" ${m.is_admin ? 'checked' : ''}> Administrateur</label>
       ${edit ? `<label class="check"><input type="checkbox" name="active" ${m.active ? 'checked' : ''}> Actif (reçoit les invitations)</label>` : ''}
       <button class="btn primary">${edit ? 'Enregistrer' : 'Ajouter'}</button>
-      ${edit ? `<div class="btns">${m.id !== data.me.id ? '<button type="button" class="btn sm" id="regen">Générer un nouveau lien</button>' : ''}<button type="button" class="btn sm" id="mcancel">Fermer</button></div>` : ''}
+      ${edit ? `<div class="btns">${m.is_admin && m.id !== data.me.id ? '<button type="button" class="btn sm" id="regen">Nouveau lien admin</button>' : ''}<button type="button" class="btn sm" id="mcancel">Fermer</button></div>` : ''}
     </form>`;
   }
 
@@ -475,7 +519,11 @@
     const lo = document.getElementById('logout');
     if (lo) lo.onclick = (e) => { e.preventDefault(); if (confirm('Changer de personne sur ce téléphone ?')) logout(); };
     const add = document.getElementById('add-member');
-    if (add) add.onclick = () => openMemberForm({ channel: 'whatsapp', active: 1 });
+    if (add) add.onclick = () => openMemberForm({ on_whatsapp: 1, active: 1 });
+    const ch = document.getElementById('change');
+    if (ch) ch.onclick = () => { editing = true; form = null; render(); document.getElementById('rsvp').scrollIntoView({ block: 'start' }); };
+    const ce = document.getElementById('cancel-edit');
+    if (ce) ce.onclick = () => { editing = false; form = null; render(); };
     $app.querySelectorAll('[data-edit-m]').forEach((b) => b.onclick = () => openMemberForm(data.members.find((m) => m.id === Number(b.dataset.editM))));
   }
 
@@ -488,6 +536,9 @@
       e.preventDefault();
       const o = Object.fromEntries(new FormData(f));
       o.is_admin = f.is_admin.checked;
+      o.on_whatsapp = f.on_whatsapp.checked;
+      o.on_signal = f.on_signal.checked;
+      if (!o.on_whatsapp && !o.on_signal) return toast('Cochez au moins WhatsApp ou Signal');
       o.active = f.active ? f.active.checked : true;
       try {
         if (m.id) await call('PUT', `/members/${m.id}`, o); else await call('POST', '/members', o);

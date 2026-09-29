@@ -44,6 +44,13 @@ const isDate = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v || '');
 const isTime = (v) => /^\d{2}:\d{2}$/.test(v || '');
 const bool = (v) => (v ? 1 : 0);
 
+// Messageries d'un membre : WhatsApp, Signal ou les deux (au moins une)
+function channels(b) {
+  let wa = bool(b.on_whatsapp), sg = bool(b.on_signal);
+  if (!wa && !sg) wa = 1;
+  return { wa, sg, legacy: sg && !wa ? 'signal' : 'whatsapp' };
+}
+
 async function body(request) {
   try { return await request.json(); } catch { throw new HttpError(400, 'Requête invalide'); }
 }
@@ -92,8 +99,9 @@ async function api(request, env, url) {
     const name = clean(b.name, 60);
     if (!name) throw new HttpError(400, 'Nom requis');
     const token = newToken();
-    await env.DB.prepare('INSERT INTO members (name, token, channel, phone, is_admin) VALUES (?, ?, ?, ?, 1)')
-      .bind(name, token, b.channel === 'signal' ? 'signal' : 'whatsapp', clean(b.phone, 30)).run();
+    const c = channels(b);
+    await env.DB.prepare('INSERT INTO members (name, token, channel, on_whatsapp, on_signal, phone, is_admin) VALUES (?, ?, ?, ?, ?, ?, 1)')
+      .bind(name, token, c.legacy, c.wa, c.sg, clean(b.phone, 30)).run();
     return json({ token });
   }
 
@@ -113,14 +121,14 @@ async function api(request, env, url) {
     if (row.is_admin) throw new HttpError(403, 'Les administrateurs utilisent leur lien personnel');
     return json({ token: row.token });
   }
-  // --- Calendrier (.ics) : accessible avec ?t= pour les applis agenda ---
-  if ((m = path.match(/^\/events\/(\d+)\/ics$/)) && method === 'GET') {
-    await auth(request, env);
+  // --- Calendrier (.ics) : ouvert directement par Safari / Agenda, sans en-têtes d'authentification ---
+  if ((m = path.match(/^\/events\/(\d+)\/[\w-]*\.ics$/)) && method === 'GET') {
     const ev = await getEvent(env, Number(m[1]));
     return new Response(ics(ev, url.origin), {
       headers: {
         'content-type': 'text/calendar; charset=utf-8',
-        'content-disposition': `attachment; filename="soiree-${ev.date}.ics"`,
+        'content-disposition': `inline; filename="soiree-${ev.date}.ics"`,
+        'cache-control': 'no-store',
       },
     });
   }
@@ -131,13 +139,19 @@ async function api(request, env, url) {
   if (path === '/me' && method === 'GET') {
     const wanted = url.searchParams.get('event');
     const ev = wanted ? await getEvent(env, Number(wanted)) : await currentEvent(env);
+    // Toutes les soirées à venir (il peut y en avoir plusieurs dans le mois)
+    const upcoming = (await env.DB.prepare(
+      `SELECT e.id, e.title, e.date, e.time, e.cancelled, e.host_id, r.attending AS mine
+         FROM events e LEFT JOIN rsvps r ON r.event_id = e.id AND r.member_id = ?
+        WHERE e.date >= ? ORDER BY e.date, e.time`
+    ).bind(me.id, todayZurich()).all()).results;
     const editor = canEdit(me, ev);
     const members = (await env.DB.prepare(
-      `SELECT m.id, m.name, m.channel, m.phone, m.is_admin, m.active, m.token,
+      `SELECT m.id, m.name, m.on_whatsapp, m.on_signal, m.phone, m.is_admin, m.active, m.token,
               (SELECT MAX(date) FROM events WHERE host_id = m.id AND cancelled = 0) AS last_hosted
          FROM members m ORDER BY m.active DESC, lower(m.name)`
     ).all()).results.map((x) => ({
-      id: x.id, name: x.name, channel: x.channel, is_admin: x.is_admin, active: x.active, last_hosted: x.last_hosted,
+      id: x.id, name: x.name, on_whatsapp: x.on_whatsapp, on_signal: x.on_signal, is_admin: x.is_admin, active: x.active, last_hosted: x.last_hosted,
       phone: me.is_admin || editor ? x.phone : undefined,
       token: me.is_admin ? x.token : undefined,
     }));
@@ -145,7 +159,7 @@ async function api(request, env, url) {
     let rsvps = [];
     if (ev) {
       rsvps = (await env.DB.prepare(
-        `SELECT r.*, m.name, m.channel FROM rsvps r JOIN members m ON m.id = r.member_id
+        `SELECT r.*, m.name, m.on_whatsapp, m.on_signal FROM rsvps r JOIN members m ON m.id = r.member_id
           WHERE r.event_id = ? ORDER BY r.attending = 'yes' DESC, r.attending = 'maybe' DESC, lower(m.name)`
       ).bind(ev.id).all()).results;
     }
@@ -160,7 +174,8 @@ async function api(request, env, url) {
 
     const latest = history[0];
     return json({
-      me: { id: me.id, name: me.name, channel: me.channel, phone: me.phone, is_admin: !!me.is_admin },
+      me: { id: me.id, name: me.name, phone: me.phone, is_admin: !!me.is_admin },
+      upcoming,
       today: todayZurich(),
       event: ev || null,
       rsvps,
@@ -168,8 +183,7 @@ async function api(request, env, url) {
       members,
       history,
       canEdit: editor,
-      // Crée la soirée suivante : l'admin, ou l'organisateur de la dernière soirée prévue
-      canCreate: !!me.is_admin || !latest || latest.host_id === me.id,
+      canCreate: await mayCreate(env, me),
     });
   }
 
@@ -190,7 +204,10 @@ async function api(request, env, url) {
     await env.DB.prepare(
       `INSERT INTO rsvps (event_id, member_id, attending, guests, eat, sing, drink, comment, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-       ON CONFLICT (event_id, member_id) DO UPDATE SET attending = excluded.attending, guests = excluded.guests,
+       ON CONFLICT (event_id, member_id) DO UPDATE SET
+         changed = CASE WHEN rsvps.attending <> excluded.attending THEN 1 ELSE rsvps.changed END,
+         previous = CASE WHEN rsvps.attending <> excluded.attending THEN rsvps.attending ELSE rsvps.previous END,
+         attending = excluded.attending, guests = excluded.guests,
          eat = excluded.eat, sing = excluded.sing, drink = excluded.drink, comment = excluded.comment,
          updated_at = excluded.updated_at`
     ).bind(ev.id, memberId, b.attending, guests,
@@ -200,9 +217,8 @@ async function api(request, env, url) {
 
   // --- Soirées ---
   if (path === '/events' && method === 'POST') {
-    const latest = await env.DB.prepare('SELECT host_id FROM events ORDER BY date DESC LIMIT 1').first();
-    if (!me.is_admin && latest && latest.host_id !== me.id) {
-      throw new HttpError(403, "Seul l'organisateur actuel ou un admin peut créer la prochaine soirée");
+    if (!(await mayCreate(env, me))) {
+      throw new HttpError(403, "Seul un organisateur d'une soirée à venir ou un admin peut en créer une nouvelle");
     }
     const e = eventFields(await body(request));
     const r = await env.DB.prepare(
@@ -227,8 +243,9 @@ async function api(request, env, url) {
     const b = await body(request);
     const name = clean(b.name, 60);
     if (!name) throw new HttpError(400, 'Nom requis');
-    const r = await env.DB.prepare('INSERT INTO members (name, token, channel, phone, is_admin) VALUES (?, ?, ?, ?, ?)')
-      .bind(name, newToken(), b.channel === 'signal' ? 'signal' : 'whatsapp', clean(b.phone, 30), bool(b.is_admin)).run();
+    const c = channels(b);
+    const r = await env.DB.prepare('INSERT INTO members (name, token, channel, on_whatsapp, on_signal, phone, is_admin) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .bind(name, newToken(), c.legacy, c.wa, c.sg, clean(b.phone, 30), bool(b.is_admin)).run();
     return json({ id: r.meta.last_row_id });
   }
   if ((m = path.match(/^\/members\/(\d+)$/)) && method === 'PUT') {
@@ -238,8 +255,9 @@ async function api(request, env, url) {
     const name = clean(b.name, 60);
     if (!name) throw new HttpError(400, 'Nom requis');
     if (id === me.id && (!b.is_admin || !b.active)) throw new HttpError(400, 'Vous ne pouvez pas retirer vos propres droits');
-    await env.DB.prepare('UPDATE members SET name = ?, channel = ?, phone = ?, is_admin = ?, active = ? WHERE id = ?')
-      .bind(name, b.channel === 'signal' ? 'signal' : 'whatsapp', clean(b.phone, 30), bool(b.is_admin), bool(b.active), id).run();
+    const c = channels(b);
+    await env.DB.prepare('UPDATE members SET name = ?, channel = ?, on_whatsapp = ?, on_signal = ?, phone = ?, is_admin = ?, active = ? WHERE id = ?')
+      .bind(name, c.legacy, c.wa, c.sg, clean(b.phone, 30), bool(b.is_admin), bool(b.active), id).run();
     return json({ ok: true });
   }
   if ((m = path.match(/^\/members\/(\d+)\/token$/)) && method === 'POST') {
@@ -249,6 +267,19 @@ async function api(request, env, url) {
   }
 
   throw new HttpError(404, 'Route inconnue');
+}
+
+// Peut créer une soirée : un admin, l'organisateur d'une soirée à venir,
+// ou celui de la dernière soirée (pour passer le relais au suivant).
+async function mayCreate(env, me) {
+  if (me.is_admin) return true;
+  const row = await env.DB.prepare(
+    `SELECT COUNT(*) AS n,
+            SUM(CASE WHEN host_id = ? AND date >= ? THEN 1 ELSE 0 END) AS upcoming_mine,
+            (SELECT host_id FROM events ORDER BY date DESC LIMIT 1) AS last_host
+       FROM events`
+  ).bind(me.id, todayZurich()).first();
+  return row.n === 0 || row.upcoming_mine > 0 || row.last_host === me.id;
 }
 
 function requireAdmin(me) {
@@ -283,7 +314,7 @@ function ics(ev, origin) {
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
   const location = [ev.place, ev.address].filter(Boolean).join(', ');
   return [
-    'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Soirees du mois//FR', 'CALSCALE:GREGORIAN',
+    'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Soirees du mois//FR', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH',
     'BEGIN:VTIMEZONE', 'TZID:Europe/Zurich',
     'BEGIN:DAYLIGHT', 'TZOFFSETFROM:+0100', 'TZOFFSETTO:+0200', 'TZNAME:CEST', 'DTSTART:19700329T020000', 'RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU', 'END:DAYLIGHT',
     'BEGIN:STANDARD', 'TZOFFSETFROM:+0200', 'TZOFFSETTO:+0100', 'TZNAME:CET', 'DTSTART:19701025T030000', 'RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU', 'END:STANDARD',
@@ -298,5 +329,20 @@ function ics(ev, origin) {
     `DESCRIPTION:${esc((ev.notes ? ev.notes + '\n\n' : '') + 'Organisé par ' + (ev.host_name || '?'))}`,
     'BEGIN:VALARM', 'ACTION:DISPLAY', `DESCRIPTION:${esc(ev.title)} demain`, 'TRIGGER:-PT24H', 'END:VALARM',
     'END:VEVENT', 'END:VCALENDAR',
-  ].filter(Boolean).join('\r\n');
+  ].filter(Boolean).map(fold).join('\r\n') + '\r\n';
+}
+
+// Les lignes iCalendar ne doivent pas dépasser 75 octets (RFC 5545) : Apple Agenda y est sensible.
+function fold(line) {
+  const enc = new TextEncoder();
+  if (enc.encode(line).length <= 75) return line;
+  const out = [];
+  let cur = '', size = 0, limit = 75;
+  for (const ch of line) {
+    const n = enc.encode(ch).length;
+    if (size + n > limit) { out.push(cur); cur = ''; size = 0; limit = 74; }
+    cur += ch; size += n;
+  }
+  out.push(cur);
+  return out.join('\r\n ');
 }

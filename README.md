@@ -9,7 +9,10 @@ Hébergement : **Cloudflare Workers + D1** (gratuit pour cet usage). Code : **Gi
 - **Un seul lien pour tous** : on poste l'adresse de l'app dans les groupes. À la première visite, chacun touche son nom dans la liste ; le téléphone s'en souvient ensuite. Les administrateurs, eux, gardent un lien personnel secret (`/m/xxxx`).
 - **WhatsApp et Signal** : l'app prépare les messages (annonce, rappel avant l'échéance, relances individuelles). L'organisateur les colle dans les deux groupes en un clic (bouton WhatsApp, bouton partager pour Signal, ou copier).
 - **Organisateur tournant** : l'organisateur de la dernière soirée (ou un admin) crée la suivante et désigne le prochain organisateur. L'app suggère celui qui n'a pas organisé depuis le plus longtemps. Le nouvel organisateur complète le lieu depuis son propre lien.
-- **Échéance** : compte à rebours visible par tous, liste de ceux qui n'ont pas répondu, message de rappel prêt à envoyer. Chaque membre peut ajouter la soirée à son agenda (fichier `.ics` avec alarme la veille).
+- **Plusieurs soirées par mois** : toutes les soirées à venir s'affichent en onglets ; chacun répond pour chacune.
+- **Changer d'avis** : chacun peut modifier sa réponse à tout moment ; l'organisateur voit « a changé d'avis ».
+- **WhatsApp et/ou Signal** : un membre peut être dans un groupe ou dans les deux.
+- **Échéance** : compte à rebours visible par tous, liste de ceux qui n'ont pas répondu, message de rappel prêt à envoyer. Chaque membre peut ajouter la soirée à son agenda (Apple/Outlook via `.ics` avec alarme la veille, ou Google Agenda).
 - **Réponses reçues par message** : l'organisateur peut noter « Oui / Non » pour quelqu'un qui a répondu directement dans le groupe.
 
 ## Premier démarrage
