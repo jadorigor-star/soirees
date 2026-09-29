@@ -1,0 +1,23 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "soirees",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-01",
+  "account_id": "9ee6319361d9d4f9d8de78136ea16da3",
+  "workers_dev": true,
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "soirees-db",
+      "database_id": "02ff7036-0821-424b-a7f3-b95e5e1d0215",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "observability": { "enabled": true }
+}
