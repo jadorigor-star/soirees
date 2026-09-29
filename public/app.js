@@ -260,23 +260,26 @@
     const ev = data.event;
     const me = data.me;
     const html = [];
-    html.push(`<div class="topbar"><h1>Soirées du mois</h1><span class="hello">Salut ${h(me.name)} · <a href="#" id="profile-open">mon profil</a> · <a href="#" id="logout">pas toi ?</a></span></div><div id="profile-box"></div>`);
+    html.push(`<header class="topbar"><h1>Soirées du mois</h1><p class="hello">Bonjour ${h(me.name)} 👋</p></header>`);
 
     html.push(switcher());
     if (!ev) {
-      html.push(`<div class="card hero center"><p style="font-size:40px;margin:0">🗓️</p><h2>Pas encore de soirée prévue</h2>
-        <p class="muted">${data.canCreate ? 'Créez la première soirée ci-dessous.' : "L'organisateur va bientôt l'annoncer."}</p></div>`);
+      html.push(`<div class="card hero center"><h2>Pas encore de soirée prévue</h2>
+        <p class="muted">${data.canCreate ? 'Crée la prochaine soirée plus bas.' : "L'organisateur va bientôt l'annoncer."}</p></div>`);
     } else {
       html.push(eventCard(ev));
       if (!ev.cancelled) html.push(rsvpCard(ev));
       html.push(summaryCard(ev));
     }
 
-    if (data.canEdit || data.canCreate || me.is_admin) html.push(`<div class="section-label">Organisation</div>`);
+    if (data.canEdit || data.canCreate || me.is_admin) html.push(`<h2 class="section-label">Pour l'organisateur</h2>`);
     if (ev && data.canEdit) html.push(shareCard(ev), editCard(ev));
     if (data.canCreate) html.push(createCard());
     if (me.is_admin) html.push(membersCard());
     if (data.history.length > 1) html.push(historyCard());
+    html.push(`<div id="profile-box"></div>
+      <footer class="foot">Tu es connecté·e en tant que <b>${h(me.name)}</b>
+        <div><a href="#" id="profile-open">Mon profil</a><a href="#" id="logout">Ce n'est pas moi</a></div></footer>`);
 
     $app.innerHTML = html.join('');
     bind();
@@ -299,27 +302,24 @@
   function eventCard(ev) {
     const left = daysBetween(data.today, ev.deadline);
     const past = ev.date < data.today;
-    const over = left < 0;
-    const dl = over
-      ? `Réponses closes depuis le ${shortDate(ev.deadline)}${past ? '' : ' — vous pouvez encore prévenir'}`
-      : `⏳ Réponses jusqu'au <b>${shortDate(ev.deadline)}</b> — ${left === 0 ? "dernier jour !" : left === 1 ? 'plus que 1 jour' : `plus que ${left} jours`}`;
     const where = [ev.place, ev.address].filter(Boolean).join(', ');
     const map = where ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(where)}` : null;
+    const dl = left < 0 ? `La date limite est passée (${shortDate(ev.deadline)}), mais tu peux encore répondre.`
+      : left === 0 ? `Réponds <b>aujourd'hui</b> : c'est le dernier jour.`
+      : `Réponds avant le <b>${shortDate(ev.deadline)}</b> (encore ${left} jour${left > 1 ? 's' : ''}).`;
     return `<section class="card hero">
-      ${ev.cancelled ? `<div class="cancelled">Soirée annulée</div>` : ''}
-      ${past && !ev.cancelled ? `<div class="cancelled">Soirée passée</div>` : ''}
-      <div class="date">${h(longDate(ev.date))}</div>
-      <h2 style="margin:0">${h(ev.title)}</h2>
-      <div class="meta">
-        <div><span>🕖</span><span>${h(ev.time)}</span></div>
-        <div><span>📍</span><span>${where ? `<a href="${h(map)}" target="_blank" rel="noopener">${h(where)}</a>` : '<span class="muted">Lieu à définir</span>'}</span></div>
-        <div><span>🙋</span><span>Organisé par <b>${h(ev.host_name || '—')}</b></span></div>
-      </div>
-      ${ev.cancelled || past ? '' : `<div class="deadline ${over ? 'over' : ''}">${dl}</div>`}
-      ${ev.notes ? `<div class="notes">${h(ev.notes)}</div>` : ''}
-      ${ev.cancelled || past ? '' : `<div class="btns">
-        <a class="btn sm" href="/api/events/${ev.id}/soiree.ics">📅 Agenda iPhone / Outlook</a>
-        <a class="btn sm" href="${h(googleCalLink(ev))}" target="_blank" rel="noopener">Google Agenda</a></div>`}
+      ${ev.cancelled ? `<p class="banner">Soirée annulée</p>` : past ? `<p class="banner">Soirée passée</p>` : ''}
+      <h2 class="ev-title">${h(ev.title)}</h2>
+      <dl class="facts">
+        <div><dt>Quand</dt><dd>${h(longDate(ev.date))}<br>à ${h(ev.time)}</dd></div>
+        <div><dt>Où</dt><dd>${where ? `<a href="${h(map)}" target="_blank" rel="noopener">${h(where)}</a>` : 'Lieu à définir'}</dd></div>
+        <div><dt>Organisé par</dt><dd>${h(ev.host_name || '—')}</dd></div>
+      </dl>
+      ${ev.notes ? `<p class="notes">${h(ev.notes)}</p>` : ''}
+      ${ev.cancelled || past ? '' : `<p class="deadline">${dl}</p>
+      <div class="cal"><span>Ajouter à mon agenda :</span>
+        <a class="btn sm" href="/api/events/${ev.id}/soiree.ics">iPhone / Outlook</a>
+        <a class="btn sm" href="${h(googleCalLink(ev))}" target="_blank" rel="noopener">Google</a></div>`}
     </section>`;
   }
 
@@ -334,7 +334,7 @@
         <div class="answer ${mine.attending}"><b>${label}</b>${extras ? `<span>${extras}</span>` : ''}</div>
         ${mine.comment ? `<p class="muted small" style="margin:8px 2px 0">« ${h(mine.comment)} »</p>` : ''}
         <button class="btn" id="change" style="width:100%;margin-top:14px">🔄 Changer d'avis / modifier</button>
-        <p class="muted small center" style="margin:8px 0 0">Tu peux changer ta réponse à tout moment.</p>
+        <p class="muted small center" style="margin:10px 0 0">Tu peux changer ta réponse à tout moment.</p>
       </section>`;
     }
     if (!form) form = mine ? { ...mine } : { attending: null, guests: 0, eat: 0, sing: 0, drink: 0, comment: '' };
@@ -346,11 +346,12 @@
       <div class="choice">${btn('yes', '👍 Oui')}${btn('maybe', '🤔 Peut-être')}${btn('no', '🙅 Non')}</div>
       ${going ? `
         <div class="stepper">
-          <span>Accompagné·e de</span>
+          <span>Accompagnants</span>
           <span class="ctrl"><button type="button" data-g="-1" aria-label="Moins">−</button><output>${form.guests}</output><button type="button" data-g="1" aria-label="Plus">+</button></span>
         </div>
-        <p class="muted small" style="margin:6px 2px 0">${form.guests ? `Vous serez ${1 + form.guests}. Les choix ci-dessous comptent pour tout votre groupe.` : 'Vous venez seul·e.'}</p>
-        <div class="toggles">${tog('eat', '🍽️', 'Je mange')}${tog('sing', '🎤', 'Karaoké')}${tog('drink', '🍷', 'Un verre')}</div>` : ''}
+        <p class="muted small" style="margin:6px 2px 0">${form.guests ? `Vous serez ${1 + form.guests} en tout.` : 'Tu viens seul·e.'}</p>
+        <p class="field">Au programme pour ${form.guests ? 'vous' : 'toi'} (touche pour choisir) :</p>
+        <div class="toggles">${tog('eat', '🍽️', 'Je mange')}${tog('sing', '🎤', 'Je chante')}${tog('drink', '🍷', 'Je bois un verre')}</div>` : ''}
       <label class="field">Un mot (facultatif)<textarea id="comment" maxlength="280" placeholder="${going ? 'Ex. : j’arrive vers 20h' : 'Ex. : la prochaine fois !'}">${h(form.comment || '')}</textarea></label>
       <button class="btn primary" id="save" ${form.attending ? '' : 'disabled'}>${mine ? 'Mettre à jour' : 'Envoyer ma réponse'}</button>
       ${mine ? `<button class="btn" id="cancel-edit" style="width:100%;margin-top:8px">Annuler</button>` : ''}
@@ -362,22 +363,24 @@
     const icons = (r) => r.attending === 'no' ? '' : `${r.eat ? '🍽️' : ''}${r.sing ? '🎤' : ''}${r.drink ? '🍷' : ''}`;
     const label = { yes: 'Oui', maybe: 'Peut-être', no: 'Non' };
     const rows = data.rsvps.map((r) => `<li>
-        <div class="who"><b>${h(r.name)}</b>${r.guests ? ` <span class="muted">+${r.guests}</span>` : ''}<span class="pill ${r.attending}">${label[r.attending]}</span>${r.changed ? `<span class="pill changed" title="Avant : ${label[r.previous] || '?'}">a changé d'avis</span>` : ''}
+        <div class="who"><b>${h(r.name)}</b>${r.guests && r.attending !== 'no' ? ` <span class="plus">+${r.guests}</span>` : ''}
+          <span class="pill ${r.attending}">${label[r.attending]}</span>${r.changed ? `<span class="pill changed" title="Avant : ${label[r.previous] || '?'}">a changé d'avis</span>` : ''}
           ${r.comment ? `<div class="c">« ${h(r.comment)} »</div>` : ''}</div>
         <span class="icons">${icons(r)}</span></li>`).join('');
     const pend = data.pending.map((p) => `<li><div class="who">${h(p.name)} ${chanPills(p)}</div>
         ${data.canEdit && !ev.cancelled ? `<span class="quick" title="Réponse reçue par message">
           <button data-for="${p.id}" data-a="yes">Oui</button><button data-for="${p.id}" data-a="no">Non</button></span>` : ''}</li>`).join('');
+    const pl = (n) => (n > 1 ? 's' : '');
     return `<section class="card">
       <h2>Qui vient ?</h2>
-      <div class="stats">
-        <div class="stat big"><b>${t.people}</b><span>personne${t.people > 1 ? 's' : ''} attendue${t.people > 1 ? 's' : ''}${t.maybe ? ` · ${t.maybe} peut-être` : ''}</span></div>
-        <div class="stat"><b>${t.eat}</b><span>🍽️ repas</span></div>
-        <div class="stat"><b>${t.sing}</b><span>🎤 karaoké</span></div>
-        <div class="stat"><b>${t.drink}</b><span>🍷 verre</span></div>
-      </div>
-      ${rows ? `<h3>Réponses (${data.rsvps.length})</h3><ul class="list">${rows}</ul>` : ''}
-      ${pend ? `<h3>Pas encore répondu (${data.pending.length})</h3><ul class="list">${pend}</ul>` : ''}
+      <p class="total"><b>${t.people}</b> personne${pl(t.people)} attendue${pl(t.people)}${t.maybe ? `<span>et ${t.maybe} peut-être</span>` : ''}</p>
+      <ul class="counts">
+        <li><span>🍽️ Mangent</span><b>${t.eat}</b></li>
+        <li><span>🎤 Chantent</span><b>${t.sing}</b></li>
+        <li><span>🍷 Boivent un verre</span><b>${t.drink}</b></li>
+      </ul>
+      ${rows ? `<h3>Les réponses (${data.rsvps.length})</h3><ul class="list">${rows}</ul>` : `<p class="muted">Personne n'a encore répondu.</p>`}
+      ${pend ? `<details class="pending"><summary>Pas encore répondu (${data.pending.length})</summary><ul class="list">${pend}</ul></details>` : ''}
     </section>`;
   }
 
@@ -393,7 +396,7 @@
         : `<button class="btn sm" data-share="ind${p.id}">Partager</button>`;
       return `<li><div class="who">${h(p.name)}</div><span class="quick">${direct}</span></li>`;
     }).join('');
-    return `<details class="card" open>
+    return `<details class="card">
       <summary>Messages pour les groupes</summary>
       <p class="muted small">Collez ces messages dans le groupe WhatsApp et dans le groupe Signal.</p>
       <h3>1. Annonce</h3>
@@ -557,8 +560,17 @@
       const box = document.getElementById('profile-box');
       if (box.innerHTML) { box.innerHTML = ''; return; }
       box.innerHTML = `<section class="card"><h2>Mon profil</h2>${profileForm('profile', data.me, 'Enregistrer')}
-        <p class="muted small" style="margin:10px 0 0">Ton nouveau nom apparaîtra partout, y compris dans la liste où chacun se choisit.</p></section>`;
+        <p class="muted small" style="margin:10px 0 0">Ton nouveau nom apparaîtra partout.</p>
+        <hr><h3>Quitter le groupe</h3>
+        <p class="muted small">Tu n'apparaîtras plus dans la liste et tes réponses aux soirées à venir seront retirées. Tu pourras revenir en t'inscrivant à nouveau.</p>
+        <button class="btn danger" id="leave" style="width:100%">Quitter le groupe</button></section>`;
+      box.scrollIntoView({ behavior: 'smooth', block: 'start' });
       bindProfileForm('profile', async (o) => { await call('PUT', '/me', o); toast('Profil mis à jour'); await load(data.event?.id); });
+      document.getElementById('leave').onclick = async () => {
+        if (!confirm('Quitter le groupe des soirées ?')) return;
+        try { await call('POST', '/me/leave'); logout(); toast('Tu as quitté le groupe. À bientôt !'); }
+        catch (err) { toast(err.message); }
+      };
     };
     const lo = document.getElementById('logout');
     if (lo) lo.onclick = (e) => { e.preventDefault(); if (confirm('Changer de personne sur ce téléphone ?')) logout(); };

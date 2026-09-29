@@ -129,6 +129,13 @@ async function api(request, env, url) {
     await assertFreeName(env, name);
     const c = channels(b);
     const token = newToken();
+    // Quelqu'un qui avait quitté le groupe revient : on réactive sa fiche (historique conservé)
+    const old = await env.DB.prepare('SELECT id FROM members WHERE lower(name) = lower(?) AND active = 0 ORDER BY id DESC LIMIT 1').bind(name).first();
+    if (old) {
+      await env.DB.prepare('UPDATE members SET active = 1, token = ?, channel = ?, on_whatsapp = ?, on_signal = ?, phone = COALESCE(?, phone) WHERE id = ?')
+        .bind(token, c.legacy, c.wa, c.sg, clean(b.phone, 30), old.id).run();
+      return json({ token });
+    }
     await env.DB.prepare('INSERT INTO members (name, token, channel, on_whatsapp, on_signal, phone) VALUES (?, ?, ?, ?, ?, ?)')
       .bind(name, token, c.legacy, c.wa, c.sg, clean(b.phone, 30)).run();
     return json({ token });
@@ -198,6 +205,19 @@ async function api(request, env, url) {
       canEdit: editor,
       canCreate: await mayCreate(env, me),
     });
+  }
+
+  // --- Quitter le groupe ---
+  if (path === '/me/leave' && method === 'POST') {
+    if (me.is_admin) {
+      const n = await env.DB.prepare('SELECT COUNT(*) AS n FROM members WHERE is_admin = 1 AND active = 1').first();
+      if (n.n <= 1) throw new HttpError(400, "Tu es le seul administrateur : nomme d'abord quelqu'un d'autre admin");
+    }
+    await env.DB.batch([
+      env.DB.prepare('DELETE FROM rsvps WHERE member_id = ? AND event_id IN (SELECT id FROM events WHERE date >= ?)').bind(me.id, todayZurich()),
+      env.DB.prepare('UPDATE members SET active = 0, is_admin = 0, token = ? WHERE id = ?').bind(newToken(), me.id),
+    ]);
+    return json({ ok: true });
   }
 
   // --- Modifier son propre profil (nom affiché, messageries, téléphone) ---
