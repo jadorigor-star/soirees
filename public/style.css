@@ -207,3 +207,21 @@ details.card > :last-child { margin-bottom: 16px; }
 .del { margin-left: 8px; width: 30px; height: 30px; border-radius: 50%; border: 1.5px solid var(--line); background: var(--card); color: var(--danger); font: inherit; font-size: 13px; font-weight: 700; letter-spacing: 0; cursor: pointer; vertical-align: middle; }
 .pill.blocked { background: var(--danger); color: #fff; }
 .danger-zone { margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--line); }
+
+/* Correction des réponses par l'organisateur */
+.list .right { display: flex; align-items: center; gap: 6px; flex: none; }
+.tgs { display: flex; gap: 4px; }
+.tg { width: 34px; height: 34px; border-radius: 9px; border: 1.5px dashed var(--line); background: var(--card); font-size: 17px; line-height: 1; cursor: pointer; padding: 0; filter: grayscale(1); opacity: .45; }
+.tg[aria-pressed="true"] { border: 1.5px solid var(--yes); background: var(--yes-soft); filter: none; opacity: 1; }
+.tools { display: flex; gap: 4px; }
+.ed, .del { width: 30px; height: 30px; margin: 0; border-radius: 50%; border: 1.5px solid var(--line); background: var(--card); font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; padding: 0; }
+.ed { color: var(--ink); }
+.del { color: var(--danger); }
+.redit { display: block !important; background: var(--bg); margin: 4px -10px; padding: 12px 10px !important; border-radius: 12px; border-top: 0 !important; }
+.seg { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.seg button { flex: 1; min-width: 0; padding: 8px 6px; border-radius: 10px; border: 1.5px solid var(--line); background: var(--card); color: var(--ink); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
+.seg button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+.seg button.yes[aria-pressed="true"] { border-color: var(--yes); background: var(--yes-soft); color: var(--yes); }
+.seg button.no[aria-pressed="true"] { border-color: var(--no); background: var(--no-soft); color: var(--no); }
+.btn.save { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.counts li.eat span small { display: block; font-size: 13px; color: var(--muted); margin-top: 1px; }

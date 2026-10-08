@@ -7,6 +7,7 @@
   let data = null;
   let form = null; // réponse en cours d'édition
   let editing = false; // « Changer d'avis » ouvert
+  let editRow = null, rowForm = null; // correction d'une réponse par l'organisateur
 
   // ---------- utilitaires ----------
   const h = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -63,6 +64,7 @@
       data = await call('GET', '/me' + (eventId ? `?event=${eventId}` : ''));
       form = null;
       editing = false;
+      editRow = null;
       render();
     } catch (e) {
       if (e.status === 401) {
@@ -365,11 +367,24 @@
     const t = totals();
     const icons = (r) => r.attending === 'no' ? '' : `${r.eat ? '🍽️' : ''}${r.sing ? '🎤' : ''}${r.drink ? '🍷' : ''}`;
     const label = { yes: 'Oui', maybe: 'Peut-être', no: 'Non' };
-    const rows = data.rsvps.map((r) => `<li>
+    const ACT = [['eat', '🍽️', 'mange'], ['sing', '🎤', 'chante'], ['drink', '🍷', 'boit un verre']];
+    const rows = data.rsvps.map((r) => {
+      if (data.canEdit && editRow === r.member_id) return rowEditor(r, label, ACT);
+      // Organisateur / admin : les pictos deviennent des interrupteurs (un toucher = corriger)
+      const acts = data.canEdit && r.attending !== 'no'
+        ? `<span class="tgs">${ACT.map(([k, e, v]) => `<button class="tg" data-tg="${k}" data-m="${r.member_id}" aria-pressed="${!!r[k]}" title="${r[k] ? 'Ne ' + v + ' pas' : v}">${e}</button>`).join('')}</span>`
+        : `<span class="icons">${icons(r)}</span>`;
+      const tools = data.canEdit ? `<span class="tools">
+          <button class="ed" data-edit-row="${r.member_id}" title="Modifier la réponse" aria-label="Modifier la réponse de ${h(r.name)}">✎</button>
+          <button class="del" data-del-rsvp="${r.member_id}" data-name="${h(r.name)}" title="Retirer cette réponse" aria-label="Retirer la réponse de ${h(r.name)}">✕</button></span>` : '';
+      return `<li>
         <div class="who"><b>${h(r.name)}</b>${r.guests && r.attending !== 'no' ? ` <span class="plus">+${r.guests}</span>` : ''}
           <span class="pill ${r.attending}">${label[r.attending]}</span>${r.changed ? `<span class="pill changed" title="Avant : ${label[r.previous] || '?'}">a changé d'avis</span>` : ''}
           ${r.comment ? `<div class="c">« ${h(r.comment)} »</div>` : ''}</div>
-        <span class="icons">${icons(r)}${data.canEdit ? `<button class="del" data-del-rsvp="${r.member_id}" data-name="${h(r.name)}" title="Retirer cette réponse" aria-label="Retirer la réponse de ${h(r.name)}">✕</button>` : ''}</span></li>`).join('');
+        <span class="right">${acts}${tools}</span></li>`;
+    }).join('');
+    const eaters = data.rsvps.filter((r) => r.attending === 'yes' && r.eat)
+      .map((r) => h(r.name) + (r.guests ? ` +${r.guests}` : '')).join(', ');
     const pend = data.pending.map((p) => `<li><div class="who">${h(p.name)} ${chanPills(p)}</div>
         ${data.canEdit && !ev.cancelled ? `<span class="quick" title="Réponse reçue par message">
           <button data-for="${p.id}" data-a="yes">Oui</button><button data-for="${p.id}" data-a="no">Non</button></span>` : ''}</li>`).join('');
@@ -378,13 +393,35 @@
       <h2>Qui vient ?</h2>
       <p class="total"><b>${t.people}</b> personne${pl(t.people)} attendue${pl(t.people)}${t.maybe ? `<span>et ${t.maybe} peut-être</span>` : ''}</p>
       <ul class="counts">
-        <li><span>🍽️ Mangent</span><b>${t.eat}</b></li>
+        <li class="eat"><span>🍽️ Mangent${eaters ? `<small>${eaters}</small>` : ''}</span><b>${t.eat}</b></li>
         <li><span>🎤 Chantent</span><b>${t.sing}</b></li>
         <li><span>🍷 Boivent un verre</span><b>${t.drink}</b></li>
       </ul>
       ${rows ? `<h3>Les réponses (${data.rsvps.length})</h3><ul class="list">${rows}</ul>` : `<p class="muted">Personne n'a encore répondu.</p>`}
       ${pend ? `<details class="pending"><summary>Pas encore répondu (${data.pending.length})</summary><ul class="list">${pend}</ul></details>` : ''}
     </section>`;
+  }
+
+  // Éditeur compact d'une réponse, pour l'organisateur ou l'admin
+  function rowEditor(r, label, ACT) {
+    const f = rowForm;
+    const going = f.attending !== 'no';
+    return `<li class="redit"><div>
+      <b>${h(r.name)}</b> <span class="muted small">— correction par l'organisateur</span>
+      <div class="seg">${['yes', 'maybe', 'no'].map((v) => `<button data-rf-att="${v}" class="${v}" aria-pressed="${f.attending === v}">${label[v]}</button>`).join('')}</div>
+      ${going ? `<div class="stepper"><span>Accompagnants</span><span class="ctrl">
+          <button type="button" data-rf-g="-1" aria-label="Moins">−</button><output>${f.guests}</output><button type="button" data-rf-g="1" aria-label="Plus">+</button></span></div>
+        <div class="seg">${ACT.map(([k, e, v]) => `<button data-rf-tg="${k}" aria-pressed="${!!f[k]}">${e} ${{ eat: 'Mange', sing: 'Chante', drink: 'Verre' }[k]}</button>`).join('')}</div>
+        <p class="muted small" style="margin:6px 0 0">${f.eat ? `${1 + f.guests} couvert${f.guests ? 's' : ''} au restaurant.` : 'Aucun couvert au restaurant.'}</p>` : ''}
+      <div class="btns"><button class="btn sm save" id="rf-save">Enregistrer</button><button class="btn sm" id="rf-cancel">Annuler</button></div>
+    </div></li>`;
+  }
+
+  async function saveFor(r, patch, msg) {
+    const o = { event_id: data.event.id, member_id: r.member_id, attending: r.attending, guests: r.guests,
+      eat: r.eat, sing: r.sing, drink: r.drink, comment: r.comment, ...patch };
+    try { await call('PUT', '/rsvp', o); toast(msg); await load(data.event.id); }
+    catch (e) { toast(e.message); }
   }
 
   function shareCard(ev) {
@@ -540,6 +577,22 @@
       } catch (e) { toast(e.message); }
     });
 
+    const findR = (id) => data.rsvps.find((r) => r.member_id === Number(id));
+    $app.querySelectorAll('[data-tg]').forEach((b) => b.onclick = () => {
+      const r = findR(b.dataset.m), k = b.dataset.tg, on = r[k] ? 0 : 1;
+      const v = { eat: ['mange', 'ne mange pas'], sing: ['chante', 'ne chante pas'], drink: ['boit un verre', 'ne boit pas de verre'] }[k];
+      saveFor(r, { [k]: on }, `${r.name} ${on ? v[0] : v[1]}`);
+    });
+    $app.querySelectorAll('[data-edit-row]').forEach((b) => b.onclick = () => {
+      const r = findR(b.dataset.editRow); editRow = r.member_id; rowForm = { ...r }; render();
+    });
+    $app.querySelectorAll('[data-rf-att]').forEach((b) => b.onclick = () => { rowForm.attending = b.dataset.rfAtt; render(); });
+    $app.querySelectorAll('[data-rf-g]').forEach((b) => b.onclick = () => { rowForm.guests = Math.max(0, Math.min(20, rowForm.guests + Number(b.dataset.rfG))); render(); });
+    $app.querySelectorAll('[data-rf-tg]').forEach((b) => b.onclick = () => { rowForm[b.dataset.rfTg] = rowForm[b.dataset.rfTg] ? 0 : 1; render(); });
+    const rfs = document.getElementById('rf-save');
+    if (rfs) rfs.onclick = () => { const r = findR(editRow); saveFor(r, rowForm, `Réponse de ${r.name} corrigée`); };
+    const rfc = document.getElementById('rf-cancel');
+    if (rfc) rfc.onclick = () => { editRow = null; render(); };
     $app.querySelectorAll('[data-del-rsvp]').forEach((b) => b.onclick = async () => {
       if (!confirm(`Retirer la réponse de ${b.dataset.name} ?`)) return;
       try { await call('DELETE', `/rsvp/${data.event.id}/${b.dataset.delRsvp}`); toast('Réponse retirée'); await load(data.event.id); }
