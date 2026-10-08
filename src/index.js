@@ -58,7 +58,7 @@ async function body(request) {
 async function auth(request, env) {
   const token = request.headers.get('x-token') || new URL(request.url).searchParams.get('t');
   if (!token) throw new HttpError(401, 'Lien personnel manquant');
-  const me = await env.DB.prepare('SELECT * FROM members WHERE token = ? AND active = 1').bind(token).first();
+  const me = await env.DB.prepare('SELECT * FROM members WHERE token = ? AND active = 1 AND blocked = 0').bind(token).first();
   if (!me) throw new HttpError(401, 'Lien personnel inconnu ou désactivé');
   return me;
 }
@@ -108,13 +108,13 @@ async function api(request, env, url) {
   // --- Lien commun : chacun choisit son nom dans la liste ---
   if (path === '/roster' && method === 'GET') {
     const rows = (await env.DB.prepare(
-      'SELECT id, name, is_admin FROM members WHERE active = 1 ORDER BY lower(name)'
+      'SELECT id, name, is_admin FROM members WHERE active = 1 AND blocked = 0 ORDER BY lower(name)'
     ).all()).results;
     return json({ members: rows.map((r) => ({ id: r.id, name: r.name, admin: !!r.is_admin })) });
   }
   if (path === '/claim' && method === 'POST') {
     const b = await body(request);
-    const row = await env.DB.prepare('SELECT token, is_admin FROM members WHERE id = ? AND active = 1')
+    const row = await env.DB.prepare('SELECT token, is_admin FROM members WHERE id = ? AND active = 1 AND blocked = 0')
       .bind(Number(b.member_id)).first();
     if (!row) throw new HttpError(404, 'Membre introuvable');
     // Les administrateurs gardent leur lien perso : il donne accès à la gestion.
@@ -126,11 +126,13 @@ async function api(request, env, url) {
     const b = await body(request);
     const name = clean(b.name, 60);
     if (!name) throw new HttpError(400, 'Indique ton prénom');
+    const banned = await env.DB.prepare('SELECT id FROM members WHERE lower(name) = lower(?) AND blocked = 1').bind(name).first();
+    if (banned) throw new HttpError(403, "Ce nom n'est pas disponible. Contacte l'organisateur.");
     await assertFreeName(env, name);
     const c = channels(b);
     const token = newToken();
     // Quelqu'un qui avait quitté le groupe revient : on réactive sa fiche (historique conservé)
-    const old = await env.DB.prepare('SELECT id FROM members WHERE lower(name) = lower(?) AND active = 0 ORDER BY id DESC LIMIT 1').bind(name).first();
+    const old = await env.DB.prepare('SELECT id FROM members WHERE lower(name) = lower(?) AND active = 0 AND blocked = 0 ORDER BY id DESC LIMIT 1').bind(name).first();
     if (old) {
       await env.DB.prepare('UPDATE members SET active = 1, token = ?, channel = ?, on_whatsapp = ?, on_signal = ?, phone = COALESCE(?, phone) WHERE id = ?')
         .bind(token, c.legacy, c.wa, c.sg, clean(b.phone, 30), old.id).run();
@@ -167,11 +169,11 @@ async function api(request, env, url) {
     ).bind(me.id, todayZurich()).all()).results;
     const editor = canEdit(me, ev);
     const members = (await env.DB.prepare(
-      `SELECT m.id, m.name, m.on_whatsapp, m.on_signal, m.phone, m.is_admin, m.active, m.token,
+      `SELECT m.id, m.name, m.on_whatsapp, m.on_signal, m.phone, m.is_admin, m.active, m.blocked, m.token,
               (SELECT MAX(date) FROM events WHERE host_id = m.id AND cancelled = 0) AS last_hosted
          FROM members m ORDER BY m.active DESC, lower(m.name)`
     ).all()).results.map((x) => ({
-      id: x.id, name: x.name, on_whatsapp: x.on_whatsapp, on_signal: x.on_signal, is_admin: x.is_admin, active: x.active, last_hosted: x.last_hosted,
+      id: x.id, name: x.name, on_whatsapp: x.on_whatsapp, on_signal: x.on_signal, is_admin: x.is_admin, active: x.active, blocked: x.blocked, last_hosted: x.last_hosted,
       phone: me.is_admin || editor ? x.phone : undefined,
       token: me.is_admin ? x.token : undefined,
     }));
@@ -184,7 +186,7 @@ async function api(request, env, url) {
       ).bind(ev.id).all()).results;
     }
     const answered = new Set(rsvps.map((r) => r.member_id));
-    const pending = members.filter((x) => x.active && !answered.has(x.id));
+    const pending = members.filter((x) => x.active && !x.blocked && !answered.has(x.id));
 
     const history = (await env.DB.prepare(
       `SELECT e.id, e.title, e.date, e.place, e.cancelled, e.host_id, m.name AS host_name,
@@ -260,6 +262,14 @@ async function api(request, env, url) {
     return json({ ok: true });
   }
 
+  // --- Retirer une réponse (organisateur de la soirée ou admin) ---
+  if ((m = path.match(/^\/rsvp\/(\d+)\/(\d+)$/)) && method === 'DELETE') {
+    const ev = await getEvent(env, Number(m[1]));
+    if (!canEdit(me, ev)) throw new HttpError(403, "Seul l'organisateur de cette soirée ou un admin peut retirer une réponse");
+    await env.DB.prepare('DELETE FROM rsvps WHERE event_id = ? AND member_id = ?').bind(ev.id, Number(m[2])).run();
+    return json({ ok: true });
+  }
+
   // --- Soirées ---
   if (path === '/events' && method === 'POST') {
     if (!(await mayCreate(env, me))) {
@@ -305,6 +315,34 @@ async function api(request, env, url) {
     const c = channels(b);
     await env.DB.prepare('UPDATE members SET name = ?, channel = ?, on_whatsapp = ?, on_signal = ?, phone = ?, is_admin = ?, active = ? WHERE id = ?')
       .bind(name, c.legacy, c.wa, c.sg, clean(b.phone, 30), bool(b.is_admin), bool(b.active), id).run();
+    return json({ ok: true });
+  }
+  // Bloquer / débloquer : un membre bloqué disparaît de la liste, perd l'accès et ne peut pas se réinscrire sous ce nom
+  if ((m = path.match(/^\/members\/(\d+)\/block$/)) && method === 'POST') {
+    requireAdmin(me);
+    const id = Number(m[1]);
+    if (id === me.id) throw new HttpError(400, 'Vous ne pouvez pas vous bloquer vous-même');
+    const b = await body(request);
+    if (b.blocked) {
+      await env.DB.batch([
+        env.DB.prepare('UPDATE members SET blocked = 1, active = 0, is_admin = 0, token = ? WHERE id = ?').bind(newToken(), id),
+        env.DB.prepare('DELETE FROM rsvps WHERE member_id = ? AND event_id IN (SELECT id FROM events WHERE date >= ?)').bind(id, todayZurich()),
+      ]);
+    } else {
+      await env.DB.prepare('UPDATE members SET blocked = 0, active = 1 WHERE id = ?').bind(id).run();
+    }
+    return json({ ok: true });
+  }
+  // Supprimer définitivement un membre et toutes ses réponses
+  if ((m = path.match(/^\/members\/(\d+)$/)) && method === 'DELETE') {
+    requireAdmin(me);
+    const id = Number(m[1]);
+    if (id === me.id) throw new HttpError(400, 'Vous ne pouvez pas vous supprimer vous-même');
+    await env.DB.batch([
+      env.DB.prepare('UPDATE events SET host_id = NULL WHERE host_id = ?').bind(id),
+      env.DB.prepare('DELETE FROM rsvps WHERE member_id = ?').bind(id),
+      env.DB.prepare('DELETE FROM members WHERE id = ?').bind(id),
+    ]);
     return json({ ok: true });
   }
   if ((m = path.match(/^\/members\/(\d+)\/token$/)) && method === 'POST') {

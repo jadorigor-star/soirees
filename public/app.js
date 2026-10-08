@@ -369,7 +369,7 @@
         <div class="who"><b>${h(r.name)}</b>${r.guests && r.attending !== 'no' ? ` <span class="plus">+${r.guests}</span>` : ''}
           <span class="pill ${r.attending}">${label[r.attending]}</span>${r.changed ? `<span class="pill changed" title="Avant : ${label[r.previous] || '?'}">a changé d'avis</span>` : ''}
           ${r.comment ? `<div class="c">« ${h(r.comment)} »</div>` : ''}</div>
-        <span class="icons">${icons(r)}</span></li>`).join('');
+        <span class="icons">${icons(r)}${data.canEdit ? `<button class="del" data-del-rsvp="${r.member_id}" data-name="${h(r.name)}" title="Retirer cette réponse" aria-label="Retirer la réponse de ${h(r.name)}">✕</button>` : ''}</span></li>`).join('');
     const pend = data.pending.map((p) => `<li><div class="who">${h(p.name)} ${chanPills(p)}</div>
         ${data.canEdit && !ev.cancelled ? `<span class="quick" title="Réponse reçue par message">
           <button data-for="${p.id}" data-a="yes">Oui</button><button data-for="${p.id}" data-a="no">Non</button></span>` : ''}</li>`).join('');
@@ -464,20 +464,21 @@
 
   function membersCard() {
     const rows = data.members.map((m) => {
+      if (m.blocked) m.active = 0;
       texts['w' + m.id] = welcomeText(m);
       const send = m.is_admin && m.id !== data.me.id
         ? `<button class="btn sm" data-share="w${m.id}" title="Envoyer son lien admin">🔑 Lien</button>` : '';
       return `<li>
         <div class="who"><b>${h(m.name)}</b>
           ${chanPills(m)}
-          ${m.is_admin ? '<span class="pill yes">admin</span>' : ''}${m.active ? '' : '<span class="pill off">inactif</span>'}
+          ${m.is_admin ? '<span class="pill yes">admin</span>' : ''}${m.blocked ? '<span class="pill blocked">bloqué</span>' : m.active ? '' : '<span class="pill off">a quitté</span>'}
           <div class="c">${m.phone ? h(m.phone) : 'pas de numéro'}</div></div>
         <span class="quick">${m.active ? send : ''}<button class="btn sm" data-edit-m="${m.id}">✎</button></span>
       </li>`;
     }).join('');
     return `<details class="card">
       <summary>Liste de distribution (${data.members.filter((m) => m.active).length})</summary>
-      <p class="muted small">Tout le monde utilise le lien commun et choisit son nom. Seuls les admins ont un lien personnel (bouton 🔑).</p>
+      <p class="muted small">Tout le monde utilise le lien commun et choisit son nom. Seuls les admins ont un lien personnel (bouton 🔑). Touchez ✎ pour modifier, bloquer ou supprimer un membre.</p>
       <ul class="list">${rows}</ul>
       <div id="member-form"></div>
       <button class="btn" id="add-member" style="display:flex;width:auto;margin-top:10px">＋ Ajouter un membre</button>
@@ -497,6 +498,13 @@
       ${edit ? `<label class="check"><input type="checkbox" name="active" ${m.active ? 'checked' : ''}> Actif (reçoit les invitations)</label>` : ''}
       <button class="btn primary">${edit ? 'Enregistrer' : 'Ajouter'}</button>
       ${edit ? `<div class="btns">${m.is_admin && m.id !== data.me.id ? '<button type="button" class="btn sm" id="regen">Nouveau lien admin</button>' : ''}<button type="button" class="btn sm" id="mcancel">Fermer</button></div>` : ''}
+      ${edit && m.id !== data.me.id ? `<div class="danger-zone">
+        <p class="small muted">${m.blocked ? 'Ce membre est bloqué : il ne voit plus l\u2019app et ne peut pas se réinscrire sous ce nom.'
+          : 'Bloquer : retire ses réponses aux soirées à venir, coupe son accès et l\u2019empêche de se réinscrire sous ce nom. Supprimer : efface le membre et tout son historique.'}</p>
+        <div class="btns">
+          <button type="button" class="btn sm ${m.blocked ? '' : 'danger'}" id="mblock">${m.blocked ? 'Débloquer' : '🚫 Bloquer'}</button>
+          <button type="button" class="btn sm danger" id="mdelete">🗑 Supprimer définitivement</button>
+        </div></div>` : ''}
     </form>`;
   }
 
@@ -532,6 +540,11 @@
       } catch (e) { toast(e.message); }
     });
 
+    $app.querySelectorAll('[data-del-rsvp]').forEach((b) => b.onclick = async () => {
+      if (!confirm(`Retirer la réponse de ${b.dataset.name} ?`)) return;
+      try { await call('DELETE', `/rsvp/${data.event.id}/${b.dataset.delRsvp}`); toast('Réponse retirée'); await load(data.event.id); }
+      catch (e) { toast(e.message); }
+    });
     $app.querySelectorAll('[data-copy]').forEach((b) => b.onclick = () => copy(texts[b.dataset.copy]));
     $app.querySelectorAll('[data-share]').forEach((b) => b.onclick = () => share(texts[b.dataset.share]));
     $app.querySelectorAll('[data-copyfirst]').forEach((a) => a.addEventListener('click', () => {
@@ -613,6 +626,19 @@
     };
     const cancel = document.getElementById('mcancel');
     if (cancel) cancel.onclick = () => { box.innerHTML = ''; };
+    const blk = document.getElementById('mblock');
+    if (blk) blk.onclick = async () => {
+      const q = m.blocked ? `Débloquer ${m.name} ? Il réapparaîtra dans la liste.` : `Bloquer ${m.name} ? Ses réponses aux soirées à venir seront retirées et il ne pourra plus accéder à l'app.`;
+      if (!confirm(q)) return;
+      try { await call('POST', `/members/${m.id}/block`, { blocked: !m.blocked }); toast(m.blocked ? `${m.name} débloqué·e` : `${m.name} bloqué·e`); await load(data.event?.id); }
+      catch (err) { toast(err.message); }
+    };
+    const del = document.getElementById('mdelete');
+    if (del) del.onclick = async () => {
+      if (!confirm(`Supprimer définitivement ${m.name} et toutes ses réponses ? Cette action est irréversible.`)) return;
+      try { await call('DELETE', `/members/${m.id}`); toast(`${m.name} supprimé·e`); await load(data.event?.id); }
+      catch (err) { toast(err.message); }
+    };
   }
 
   function readComment() {

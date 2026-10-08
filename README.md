@@ -12,6 +12,7 @@ Hébergement : **Cloudflare Workers + D1** (gratuit pour cet usage). Code : **Gi
 - **Plusieurs soirées par mois** : toutes les soirées à venir s'affichent en onglets ; chacun répond pour chacune.
 - **Changer d'avis** : chacun peut modifier sa réponse à tout moment ; l'organisateur voit « a changé d'avis ».
 - **WhatsApp et/ou Signal** : un membre peut être dans un groupe ou dans les deux.
+- **Modération (admin)** : retirer une réponse (✕ dans « Qui vient ? », aussi possible pour l'organisateur de la soirée), bloquer/débloquer un membre, ou le supprimer définitivement (bouton ✎ dans la liste de distribution).
 - **Échéance** : compte à rebours visible par tous, liste de ceux qui n'ont pas répondu, message de rappel prêt à envoyer. Chaque membre peut ajouter la soirée à son agenda (Apple/Outlook via `.ics` avec alarme la veille, ou Google Agenda).
 - **Réponses reçues par message** : l'organisateur peut noter « Oui / Non » pour quelqu'un qui a répondu directement dans le groupe.
 
