@@ -105,6 +105,11 @@ async function api(request, env, url) {
     return json({ token });
   }
 
+  // --- Réglages publics (titre de l'app) ---
+  if (path === '/settings' && method === 'GET') {
+    return json(await getSettings(env));
+  }
+
   // --- Lien commun : chacun choisit son nom dans la liste ---
   if (path === '/roster' && method === 'GET') {
     const rows = (await env.DB.prepare(
@@ -292,6 +297,17 @@ async function api(request, env, url) {
     return json({ ok: true });
   }
 
+  // --- Réglages (admin) ---
+  if (path === '/settings' && method === 'PUT') {
+    requireAdmin(me);
+    const b = await body(request);
+    const title = clean(b.title, 60);
+    if (!title) throw new HttpError(400, 'Le titre ne peut pas être vide');
+    await env.DB.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value')
+      .bind('title', title).run();
+    return json({ ok: true });
+  }
+
   // --- Liste de distribution (admin) ---
   if (path === '/members' && method === 'POST') {
     requireAdmin(me);
@@ -372,6 +388,12 @@ async function assertFreeName(env, name, exceptId = 0) {
   const dup = await env.DB.prepare('SELECT id FROM members WHERE lower(name) = lower(?) AND active = 1 AND id <> ?')
     .bind(name, exceptId).first();
   if (dup) throw new HttpError(409, `« ${name} » existe déjà : choisis ce nom dans la liste, ou ajoute une initiale`);
+}
+
+const DEFAULT_TITLE = 'Soirées du mois';
+async function getSettings(env) {
+  const row = await env.DB.prepare("SELECT value FROM settings WHERE key = 'title'").first();
+  return { title: (row && row.value) || DEFAULT_TITLE };
 }
 
 function requireAdmin(me) {

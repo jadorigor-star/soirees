@@ -7,7 +7,9 @@
   let data = null;
   let form = null; // réponse en cours d'édition
   let editing = false; // « Changer d'avis » ouvert
-  let editRow = null, rowForm = null; // correction d'une réponse par l'organisateur
+  let editRow = null, rowForm = null;
+  let appTitle = 'Soirées du mois'; // modifiable par un admin (Réglages)
+  function setTitle(t) { if (t) { appTitle = t; document.title = t; } } // correction d'une réponse par l'organisateur
 
   // ---------- utilitaires ----------
   const h = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -48,6 +50,7 @@
 
   // ---------- démarrage ----------
   async function boot() {
+    try { setTitle((await call('GET', '/settings')).title); } catch {}
     const m = location.pathname.match(/^\/m\/([a-z0-9]+)/i);
     if (m) {
       token = m[1];
@@ -81,7 +84,7 @@
     try { setup = (await call('GET', '/setup')).needsSetup; } catch {}
     if (setup) {
       $app.innerHTML = `
-        <div class="topbar"><h1>Soirées du mois</h1></div>
+        <div class="topbar"><h1>${h(appTitle)}</h1></div>
         <div class="card hero">
           <h2>Bienvenue 👋</h2>
           <p>Première utilisation : créez votre profil. Vous serez administrateur et pourrez ajouter les autres membres.</p>
@@ -107,7 +110,7 @@
     let roster = [];
     try { roster = (await call('GET', '/roster')).members; } catch {}
     $app.innerHTML = `
-      <div class="topbar"><h1>Soirées du mois</h1></div>
+      <div class="topbar"><h1>${h(appTitle)}</h1></div>
       <div class="card hero">
         <h2>Qui es-tu ? 👋</h2>
         <p class="muted small" style="margin-top:-6px">${err ? h(err) + '. ' : ''}Touche ton nom : ton téléphone s'en souviendra pour les prochaines fois.</p>
@@ -262,7 +265,7 @@
     const ev = data.event;
     const me = data.me;
     const html = [];
-    html.push(`<header class="topbar"><h1>Soirées du mois</h1><p class="hello">Bonjour ${h(me.name)} 👋</p></header>`);
+    html.push(`<header class="topbar"><h1>${h(appTitle)}</h1><p class="hello">Bonjour ${h(me.name)} 👋</p></header>`);
 
     html.push(switcher());
     if (!ev) {
@@ -277,7 +280,7 @@
     const org = [];
     if (ev && data.canEdit) org.push(shareCard(ev), editCard(ev));
     if (data.canCreate) org.push(createCard());
-    if (me.is_admin) org.push(membersCard());
+    if (me.is_admin) org.push(membersCard(), settingsCard());
     if (org.length) {
       html.push(`<section class="admin-zone"><h2 class="section-label">⚙️ Espace organisateur${me.is_admin ? ' · admin' : ''}</h2>${org.join('')}</section>`);
     }
@@ -522,6 +525,17 @@
     </details>`;
   }
 
+  function settingsCard() {
+    return `<details class="card">
+      <summary>Réglages</summary>
+      <form id="settings">
+        <label class="field">Nom de l'app (affiché en haut de chaque page)
+          <input type="text" name="title" required maxlength="60" value="${h(appTitle)}"></label>
+        <button class="btn primary">Enregistrer</button>
+      </form>
+    </details>`;
+  }
+
   function memberForm(m) {
     const edit = !!m.id;
     return `<form id="mform" class="card" style="margin:12px 0 0;box-shadow:none">
@@ -577,6 +591,13 @@
       } catch (e) { toast(e.message); }
     });
 
+    const st = document.getElementById('settings');
+    if (st) st.onsubmit = async (e) => {
+      e.preventDefault();
+      const title = st.querySelector('[name=title]').value.trim();
+      try { await call('PUT', '/settings', { title }); setTitle(title); toast('Nom de l\u2019app mis à jour'); render(); }
+      catch (err) { toast(err.message); }
+    };
     const findR = (id) => data.rsvps.find((r) => r.member_id === Number(id));
     $app.querySelectorAll('[data-tg]').forEach((b) => b.onclick = () => {
       const r = findR(b.dataset.m), k = b.dataset.tg, on = r[k] ? 0 : 1;
